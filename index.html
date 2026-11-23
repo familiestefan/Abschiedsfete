@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Mitbringliste</title>
+<style>
+*{box-sizing:border-box;font-family:sans-serif}
+body{background:#f4f6f8;margin:0;padding:14px;display:flex;justify-content:center}
+.wrap{width:100%;max-width:600px}
+header{background:#2563eb;color:#fff;padding:16px;border-radius:12px;margin-bottom:12px}
+header h1{margin:0 0 4px;font-size:1.3rem}
+.box,.card,.adm{background:#fff;border-radius:10px;padding:12px;margin-bottom:10px;box-shadow:0 1px 4px #0001}
+.box{border:2px solid #2563eb}
+.adm{border:2px solid #dc2626;background:#fef2f2}
+.card.done{opacity:.75;background:#f8fafc}
+.hd{display:flex;justify-content:space-between;align-items:center;font-weight:700;margin-bottom:6px;gap:8px}
+.bdg{background:#fef3c7;color:#92400e;padding:3px 8px;border-radius:99px;font-size:.8rem;white-space:nowrap}
+.bdg.ok{background:#dcfce7;color:#166534}
+ul{list-style:none;padding:0;margin:6px 0 0}
+li{background:#f8fafc;border:1px solid #e2e8f0;padding:5px 8px;border-radius:6px;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;font-size:.9rem}
+.del{border:none;background:none;color:#ef4444;font-weight:700;cursor:pointer;padding:0 4px;font-size:1rem}
+.row{display:flex;gap:6px;margin-top:8px}
+input[type="text"],input[type="number"]{padding:8px;border:1px solid #cbd5e1;border-radius:6px;width:100%}
+input.q{width:95px;text-align:center}
+button.add{background:#2563eb;color:#fff;border:none;border-radius:6px;padding:8px 12px;font-weight:700;cursor:pointer;white-space:nowrap}
+button.adm-btn{background:#dc2626;color:#fff;border:none;border-radius:6px;padding:8px 12px;font-weight:700;cursor:pointer;white-space:nowrap}
+</style>
+</head>
+<body>
+<div class="wrap">
+<header><h1>🥳 Abschiedsparty ~2026</h1><div>1. Namen oben eintragen → 2. Mengen wählen → Fertig!</div></header>
+
+<!-- ADMIN-BEREICH (NUR SICHTBAR MIT ?admin=1234) -->
+<div id="admin-box" class="adm" style="display:none">
+  <b>🔧 Admin: Neuen Artikel auf die Wunschliste setzen</b>
+  <div class="row">
+    <input type="text" id="aname" placeholder="Artikel (z. B. Bier (Kästen))">
+    <input type="number" id="aqty" min="1" class="q" placeholder="Menge">
+    <button class="adm-btn" onclick="addItem()">Anlegen</button>
+  </div>
+</div>
+
+<div class="box"><b>Dein Name:</b><input type="text" id="gname" placeholder="z. B. Max" style="margin-top:6px"></div>
+
+<!-- 1. OFFENE ARTIKEL -->
+<div id="list-open"></div>
+
+<!-- 2. EIGENE IDEEN -->
+<div class="card"><b>➕ Eigene Idee mitbringen</b>
+  <div class="row"><input type="text" id="cw" placeholder="Was bringst du mit?"><input type="number" id="cq" min="1" class="q" placeholder="Menge"><button class="add" onclick="addC()">+</button></div>
+  <ul id="clist"></ul>
+</div>
+
+<!-- 3. FERTIGE ARTIKEL (GANZ UNTEN) -->
+<div id="list-done"></div>
+</div>
+<script>
+const DB = "https://abschiedsparty-366d8-default-rtdb.europe-west1.firebasedatabase.app/
+".replace(/\/$/,"");
+const ADMIN_PASS = "1408"; // Dein geheimes Kürzel für ?admin=1234
+
+const isAdmin = new URLSearchParams(location.search).get("admin") === ADMIN_PASS;
+if(isAdmin) document.getElementById("admin-box").style.display = "block";
+
+let demo = {
+  items:{i1:{n:"Bier (Kästen)",m:2},i2:{n:"Salat (Schüsseln)",m:3}},
+  p:{i1:{a:{name:"Lukas",qty:1}},i2:{b:{name:"Anna",qty:3}},custom:{c:{what:"Kräuterbutter",qty:2,name:"Sarah"}}}
+};
+const live = DB.startsWith("http");
+const gn = document.getElementById("gname");
+
+try{
+  gn.value=localStorage.getItem("pn")||"";
+  gn.oninput=()=>{localStorage.setItem("pn",gn.value); load();};
+}catch(e){}
+
+function who(){const v=gn.value.trim();if(!v){alert("Bitte erst oben Namen eingeben!");gn.focus();}return v;}
+function canDel(entryName){
+  if(isAdmin) return true;
+  const me = gn.value.trim().toLowerCase();
+  return me !== "" && me === String(entryName||"").trim().toLowerCase();
+}
+
+async function load(){
+  let root = demo;
+  if(live){try{const r=await fetch(DB+"/.json");root=(await r.json())||{};}catch(e){}}
+  const itemsObj = root.items || {};
+  const d = root.p || {};
+
+  const prepared = Object.entries(itemsObj).map(([id,it])=>{
+    const ent=d[id]||{}; let sum=0, lis="";
+    Object.entries(ent).forEach(([k,v])=>{
+      const q=+v.qty||1; sum+=q;
+      const delBtn = canDel(v.name) ? `<button class="del" onclick="del('${id}','${k}')">✕</button>` : ``;
+      lis+=`<li><span><b>${v.name}</b>: ${q}x</span>${delBtn}</li>`;
+    });
+    const rest=Math.max(0,(+it.m||1)-sum);
+    return {id, n:it.n, m:+it.m||1, rest, lis};
+  });
+  prepared.sort((a,b)=>(a.rest===0)-(b.rest===0));
+
+  const lo=document.getElementById("list-open"), ld=document.getElementById("list-done");
+  lo.innerHTML=""; ld.innerHTML="";
+
+  prepared.forEach(it=>{
+    const inputRow = it.rest > 0
+      ? `<div class="row"><input type="number" min="1" max="${it.rest}" id="q_${it.id}" class="q" placeholder="Menge"><button class="add" onclick="add('${it.id}')">+ Mitbringen</button></div>`
+      : ``;
+    const admDel = isAdmin ? `<button class="del" title="Artikel komplett löschen" onclick="delItem('${it.id}')">🗑️</button>` : ``;
+    const html = `<div class="card ${it.rest?'':'done'}"><div class="hd"><span>${it.n} ${admDel}</span><span class="bdg ${it.rest?'':'ok'}">${it.rest?'Fehlt noch: '+it.rest+' von '+it.m:'✓ Komplett!'}</span></div><ul>${it.lis}</ul>${inputRow}</div>`;
+    if(it.rest > 0) lo.innerHTML += html;
+    else ld.innerHTML += html;
+  });
+
+  const cl=document.getElementById("clist"); cl.innerHTML="";
+  Object.entries(d.custom||{}).forEach(([k,v])=>{
+    const q=+v.qty||1;
+    const delBtn = canDel(v.name) ? `<button class="del" onclick="del('custom','${k}')">✕</button>` : ``;
+    cl.innerHTML+=`<li><span><b>${v.what}</b> (${q}x) – ${v.name}</span>${delBtn}</li>`;
+  });
+}
+
+async function addItem(){
+  const nEl=document.getElementById("aname"), qEl=document.getElementById("aqty");
+  const n=nEl.value.trim(), m=Math.max(1,+qEl.value||1);
+  if(!n) return alert("Bitte Artikelname eingeben!");
+  if(live) await fetch(`${DB}/items.json`,{method:"POST",body:JSON.stringify({n,m})});
+  else {demo.items["i"+Date.now()]={n,m};}
+  nEl.value=""; qEl.value=""; load();
+}
+
+async function delItem(id){
+  if(!confirm("Diesen Artikel komplett aus der Liste entfernen?")) return;
+  if(live){
+    await fetch(`${DB}/items/${id}.json`,{method:"DELETE"});
+    await fetch(`${DB}/p/${id}.json`,{method:"DELETE"});
+  } else { delete demo.items[id]; delete demo.p[id]; }
+  load();
+}
+
+async function add(id){
+  const name=who(); if(!name)return;
+  const el=document.getElementById("q_"+id), qty=Math.max(1,+el.value||1);
+  if(live) await fetch(`${DB}/p/${id}.json`,{method:"POST",body:JSON.stringify({name,qty})});
+  else {demo.p[id]=demo.p[id]||{}; demo.p[id]["k"+Date.now()]={name,qty};}
+  load();
+}
+
+async function addC(){
+  const name=who(); if(!name)return;
+  const w=document.getElementById("cw"), q=document.getElementById("cq"), what=w.value.trim(), qty=Math.max(1,+q.value||1);
+  if(!what)return alert("Bitte eintragen, was du mitbringst!");
+  if(live) await fetch(`${DB}/p/custom.json`,{method:"POST",body:JSON.stringify({what,qty,name})});
+  else {demo.p.custom=demo.p.custom||{}; demo.p.custom["k"+Date.now()]={what,qty,name};}
+  w.value=""; q.value=""; load();
+}
+
+async function del(cat,k){
+  if(!confirm("Eintrag wirklich löschen?"))return;
+  if(live) await fetch(`${DB}/p/${cat}/${k}.json`,{method:"DELETE"});
+  else delete demo.p[cat][k];
+  load();
+}
+
+load(); if(live) setInterval(load,5000);
+</script>
+</body>
+</html>
